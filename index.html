@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#081522">
+<title>FlightRadar Bapt</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{color-scheme:dark;--bg:#081522;--panel:#0d2031;--line:#29465d;--cyan:#42c8f2;--muted:#9db2c3}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#f1f7fc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#0a1a29;border-bottom:1px solid var(--line)}
+.brand{font-size:18px;font-weight:800}.brand span{color:var(--cyan)}.mode{font-size:10px;color:#ffd477;border:1px solid #705a2b;background:#302817;border-radius:18px;padding:6px 9px}
+.toolbar{display:flex;gap:7px;padding:9px;background:#0a1a29;overflow-x:auto}
+.toolbar input{flex:1;min-width:115px;background:#10283c;border:1px solid var(--line);border-radius:10px;padding:10px;color:white;font-size:13px}
+button{background:#123149;border:1px solid #31566f;color:#f1f7fc;border-radius:10px;padding:9px 11px;font-size:12px;font-weight:700;white-space:nowrap}
+button.primary{background:#087ca5;border-color:#1598c4}button:disabled{opacity:.5}
+#map{height:calc(100dvh - 111px);min-height:420px;width:100%;background:#12283a}
+.leaflet-container{background:#142a3b}.leaflet-control-attribution{font-size:9px!important}.leaflet-control-zoom a{background:#10283c!important;color:#fff!important;border-color:#36536a!important}
+.plane-marker{background:transparent;border:0}.plane-glyph{display:block;color:#39d1ff;font-size:23px;line-height:27px;text-shadow:0 2px 4px #00111c,0 0 5px #00111c;transform-origin:center;text-align:center}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#0d2031;color:#f1f7fc}.leaflet-popup-content{margin:11px 14px}.popup-title{font-weight:800;font-size:15px}.popup-sub{color:#a9bdcc;font-size:12px;margin-top:4px}
+#panel{position:absolute;z-index:800;left:10px;right:10px;bottom:17px;background:#0b1d2df5;border:1px solid #31516a;border-radius:16px;padding:14px;box-shadow:0 8px 28px #0009;display:none}#panel.open{display:block}
+.paneltop{display:flex;justify-content:space-between;align-items:center}.flight{font-size:20px;font-weight:800}.sub{font-size:12px;color:var(--muted);margin-top:3px}.close{width:31px;height:31px;padding:0;border-radius:50%;font-size:18px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}.stats small{display:block;color:#91aabc;font-size:9px;text-transform:uppercase;letter-spacing:.5px}.stats strong{display:block;font-size:14px;margin-top:4px;overflow-wrap:anywhere}
+#toast{position:absolute;z-index:750;left:10px;right:10px;top:10px;margin:auto;max-width:500px;background:#071522ed;border:1px solid #31516a;border-radius:10px;padding:9px 11px;font-size:11px;color:#d4e2ec;pointer-events:none}
+.leaflet-bottom{bottom:4px}
+@media(min-width:700px){#panel{left:auto;right:18px;bottom:20px;width:355px}.toolbar{padding-left:14px}}
+</style>
+</head>
+<body>
+<header><div class="brand">✈ FlightRadar <span>Bapt</span></div><div class="mode" id="mode">MODE DÉMO</div></header>
+<div class="toolbar">
+<input id="search" placeholder="Vol, immatriculation, modèle…">
+<button id="searchBtn">Rechercher</button>
+<button class="primary" id="liveBtn">Avions réels</button>
+<button id="demoBtn">Démo</button>
+<button id="locBtn">◎</button>
+</div>
+<div id="map"></div>
+<div id="toast">Carte réelle OpenStreetMap · Démo active : avions fictifs. Déplace et zoome avec les doigts.</div>
+<section id="panel">
+ <div class="paneltop"><div><div class="flight" id="pFlight">AFR123</div><div class="sub" id="pRoute">Avion de démonstration</div></div><button class="close" id="close">×</button></div>
+ <div class="stats">
+  <div><small>Type</small><strong id="pType">Airbus A320</strong></div>
+  <div><small>Altitude</small><strong id="pAlt">35 000 ft</strong></div>
+  <div><small>Vitesse sol</small><strong id="pSpeed">445 kt</strong></div>
+  <div><small>Cap</small><strong id="pTrack">012°</strong></div>
+  <div><small>Immatriculation</small><strong id="pReg">F-HEXX</strong></div>
+  <div><small>Source</small><strong id="pSource">Démo</strong></div>
+ </div>
+</section>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+const map=L.map('map',{zoomControl:false,preferCanvas:true}).setView([43.45,5.35],7);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+L.control.zoom({position:'bottomright'}).addTo(map);
+let markers=new Map(), currentMode='demo', liveTimer=null, lastAircraft=[];
+const demo=[
+{hex:'demo01',flight:'AFR123',route:'Marseille → Paris-CDG',type:'Airbus A320',alt:35000,gs:445,track:12,r:'F-HEXX',lat:44.05,lon:5.1},
+{hex:'demo02',flight:'DLH8K',route:'Nice → Munich',type:'Airbus A321',alt:37000,gs:452,track:35,r:'D-AIXX',lat:44,lon:7},
+{hex:'demo03',flight:'QTR92',route:'Doha → Paris-CDG',type:'Boeing 777-300ER',alt:39000,gs:485,track:315,r:'A7-BEX',lat:43,lon:4.1},
+{hex:'demo04',flight:'UAE7',route:'Dubai → London-Heathrow',type:'Airbus A380-800',alt:41000,gs:490,track:300,r:'A6-EUX',lat:45,lon:6.4},
+{hex:'demo05',flight:'EZY45AB',route:'Lyon → Rome-Fiumicino',type:'Airbus A320neo',alt:33000,gs:430,track:140,r:'G-EZXX',lat:44.7,lon:4},
+{hex:'demo06',flight:'AFR6MN',route:'Toulouse → Marseille',type:'Airbus A319',alt:29000,gs:405,track:105,r:'F-GRXX',lat:43.65,lon:3.2}
+];
+function toast(s){document.getElementById('toast').textContent=s}
+function fmtAlt(a){if(a==='ground')return 'Au sol';if(typeof a==='number')return Math.round(a).toLocaleString('fr-FR')+' ft';return '—'}
+function norm(a){return {hex:a.hex||'',flight:(a.flight||'').trim()||'Vol inconnu',route:'Position ADS-B reçue',type:a.t||'Type inconnu',alt:a.alt_baro,gs:a.gs,track:a.track,r:a.r||'—',lat:a.lat,lon:a.lon,source:'ADS-B',seen:a.seen_pos}}
+function clearMarkers(){for(const m of markers.values())map.removeLayer(m);markers.clear()}
+function makeIcon(track){return L.divIcon({className:'plane-marker',html:`<span class="plane-glyph" style="transform:rotate(${Number(track)||0}deg)">✈</span>`,iconSize:[30,30],iconAnchor:[15,15]})}
+function showPanel(a){const fields={pFlight:a.flight,pRoute:a.route||'Trajet non fourni',pType:a.type||'—',pAlt:fmtAlt(a.alt),pSpeed:typeof a.gs==='number'?Math.round(a.gs)+' kt':'—',pTrack:typeof a.track==='number'?Math.round(a.track)+'°':'—',pReg:a.r||'—',pSource:a.source||'ADS-B'};for(const [id,val] of Object.entries(fields))document.getElementById(id).textContent=val;document.getElementById('panel').classList.add('open')}
+function render(list){lastAircraft=list;const keep=new Set();list.forEach(a=>{if(!Number.isFinite(a.lat)||!Number.isFinite(a.lon))return;const id=a.hex||a.flight;keep.add(id);let marker=markers.get(id);if(!marker){marker=L.marker([a.lat,a.lon],{icon:makeIcon(a.track),keyboard:true}).addTo(map);marker.on('click',()=>showPanel(marker.aircraft));markers.set(id,marker)}marker.aircraft=a;marker.setLatLng([a.lat,a.lon]);marker.setIcon(makeIcon(a.track));marker.bindPopup(`<div class="popup-title">${escapeHtml(a.flight)}</div><div class="popup-sub">${escapeHtml(a.type||'Type inconnu')} · ${escapeHtml(a.r||'Immat. inconnue')}</div><div class="popup-sub">${escapeHtml(fmtAlt(a.alt))} · ${escapeHtml(typeof a.gs==='number'?Math.round(a.gs)+' kt':'Vitesse —')}</div>`)});for(const [id,m] of markers){if(!keep.has(id)){map.removeLayer(m);markers.delete(id)}}document.getElementById('counter');toast(list.length+' avions reçus · '+(currentMode==='live'?'données ADS-B communautaires':'positions fictives de démonstration'))}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+let demoTimer=null;
+function startDemo(){currentMode='demo';stopLive();clearMarkers();document.getElementById('mode').textContent='MODE DÉMO';document.getElementById('panel').classList.remove('open');demo.forEach((a,i)=>{a.x=i});function update(){demo.forEach((a,i)=>{a.lat+=([.004,.003,-.002,.002,-.003,.001][i]);a.lon+=([.006,-.004,.005,-.003,.004,.005][i])});render(demo.map(a=>({...a,source:'Démo'})))}update();if(demoTimer)clearInterval(demoTimer);demoTimer=setInterval(update,4500);toast('Démo : avions fictifs. Carte réelle et zoom libre activés.')}
+function stopLive(){if(liveTimer){clearInterval(liveTimer);liveTimer=null}if(demoTimer){clearInterval(demoTimer);demoTimer=null}}
+async function loadLive(){stopLive();currentMode='live';document.getElementById('mode').textContent='ADS-B · EN DIRECT';document.getElementById('panel').classList.remove('open');const c=map.getCenter();const radius=100;toast('Recherche des avions ADS-B autour de la carte…');try{const url=`https://api.adsb.lol/v2/lat/${c.lat.toFixed(3)}/lon/${c.lng.toFixed(3)}/dist/${radius}`;const res=await fetch(url,{headers:{'Accept':'application/json'}});if(!res.ok)throw new Error('Réponse serveur '+res.status);const data=await res.json();const ac=(data.ac||[]).filter(a=>Number.isFinite(a.lat)&&Number.isFinite(a.lon)).map(norm);clearMarkers();render(ac);if(ac.length===0)toast('Aucun avion reçu dans ce rayon pour le moment. Essaie de déplacer la carte.');else toast(ac.length+' avions ADS-B reçus dans un rayon de 100 NM. Les données peuvent être incomplètes.');}catch(e){clearMarkers();document.getElementById('mode').textContent='ADS-B indisponible';toast('La source ADS-B ne répond pas depuis ce navigateur (connexion/CORS ou limite). La carte fonctionne ; réessaie plus tard ou utilise la démo.');console.warn(e)}}
+document.getElementById('liveBtn').onclick=()=>{loadLive();};
+document.getElementById('demoBtn').onclick=()=>startDemo();
+document.getElementById('close').onclick=()=>document.getElementById('panel').classList.remove('open');
+document.getElementById('searchBtn').onclick=()=>{const q=document.getElementById('search').value.trim().toUpperCase();const found=lastAircraft.find(a=>(a.flight||'').toUpperCase().includes(q)||(a.r||'').toUpperCase().includes(q)||(a.type||'').toUpperCase().includes(q)||(a.hex||'').toUpperCase()===q);if(found){showPanel(found);map.setView([found.lat,found.lon],Math.max(map.getZoom(),8))}else toast('Aucun résultat parmi les avions actuellement chargés.')};
+document.getElementById('search').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('searchBtn').click()});
+document.getElementById('locBtn').onclick=()=>{if(!navigator.geolocation){toast('La géolocalisation n’est pas disponible dans cet aperçu.');return}navigator.geolocation.getCurrentPosition(pos=>map.setView([pos.coords.latitude,pos.coords.longitude],10),()=>toast('Autorisation de localisation refusée ou indisponible.'),{enableHighAccuracy:false,timeout:10000})};
+map.on('moveend',()=>{if(currentMode==='live')toast('Carte déplacée. Appuie sur « Avions réels » pour actualiser autour de cette zone.')});
+startDemo();
+})();
+</script>
+</body></html>
